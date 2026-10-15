@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dino × System One</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='7' y='2' width='7' height='5' fill='%23535353'/><rect x='3' y='6' width='8' height='6' fill='%23535353'/><rect x='4' y='12' width='2' height='3' fill='%23535353'/><rect x='8' y='12' width='2' height='3' fill='%23535353'/></svg>">
+<style>
+  :root {
+    --bg: #f7f7f7; --fg: #535353; --muted: #8a8a8a; --panel: #ffffff; --line: #e2e2e2;
+    --run: #8a8a8a; --jump: #2f7de1; --duck: #d9822b; --bad: #c0392b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1b1b1d; --fg: #d6d6d6; --muted: #8d8d93; --panel: #242427; --line: #36363a;
+            --run: #8d8d93; --jump: #5b9cf0; --duck: #e89b4c; --bad: #e0675a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 14px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  main { max-width: 860px; margin: 0 auto; padding: 20px 16px 40px; }
+  h1 { font-size: 18px; margin: 0 0 2px; }
+  .sub { color: var(--muted); margin: 0 0 14px; }
+  canvas { width: 100%; height: auto; display: block; background: var(--panel);
+           border: 1px solid var(--line); border-radius: 8px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin: 12px 0; }
+  .bar label { display: inline-flex; gap: 6px; align-items: center; }
+  button, select { font: inherit; color: var(--fg); background: var(--panel);
+                   border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  button.on { border-color: var(--jump); color: var(--jump); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin: 12px 0; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .stat b { display: block; font-size: 18px; }
+  .stat span { color: var(--muted); font-size: 12px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin: 12px 0; }
+  .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
+  #state { min-height: 3em; white-space: pre-wrap; word-break: break-word; }
+  .prob { display: grid; grid-template-columns: 48px 1fr 52px; gap: 8px; align-items: center; margin: 4px 0; }
+  .track { height: 12px; background: var(--line); border-radius: 6px; overflow: hidden; }
+  .fill { height: 100%; width: 0; transition: width .08s linear; }
+  .prob.win b { text-decoration: underline; }
+  #log { margin: 0; padding: 0; list-style: none; max-height: 220px; overflow: auto; font-size: 12px; }
+  #log li { padding: 2px 0; border-bottom: 1px solid var(--line); display: flex; gap: 10px; }
+  #log .c { width: 40px; font-weight: bold; }
+  #log .s { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  #status.err { color: var(--bad); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Dino × System One</h1>
+  <p class="sub">A local <code>tev1:0.8b</code> System One model plays the dino runner. Each decision is one <code>choice</code> question: run / jump / duck.</p>
+
+  <canvas id="c" width="800" height="240"></canvas>
+
+  <div class="bar">
+    <span>Player:</span>
+    <button id="modeAi" class="on">AI</button>
+    <button id="modeHuman">Human</button>
+    <label>State <select id="style">
+      <option value="semantic">semantic (time-to-impact)</option>
+      <option value="raw">raw (pixels)</option>
+    </select></label>
+    <label><input type="checkbox" id="auto" checked> auto-restart</label>
+    <button id="restart">Restart (R)</button>
+    <span id="status">warming up model…</span>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><b id="score">0</b><span>score</span></div>
+    <div class="stat"><b id="best">0</b><span>best</span></div>
+    <div class="stat"><b id="cleared">0</b><span>obstacles cleared</span></div>
+    <div class="stat"><b id="lat">–</b><span>last decision (ms)</span></div>
+    <div class="stat"><b id="avg">–</b><span>avg latency (ms)</span></div>
+    <div class="stat"><b id="calls">0</b><span>model calls</span></div>
+  </div>
+
+  <div class="panel">
+    <h2>State sent to the model</h2>
+    <div id="state">–</div>
+  </div>
+
+  <div class="panel">
+    <h2>Model answer</h2>
+    <div id="probs"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Recent decisions</h2>
+    <ul id="log"></ul>
+  </div>
+
+  <p class="sub">Human mode: Space / ↑ to jump, ↓ to duck. R restarts.</p>
+</main>
+
+<script type="module">
+import { createGame, step, observe, dinoBox, DINO_X, WORLD_W } from './game.js';
+import { Agent, apply } from './agent.js';
+
+const $ = id => document.getElementById(id);
+const canvas = $('c'), ctx = canvas.getContext('2d');
+const GROUND = 200;
+const COLORS = { run: 'var(--run)', jump: 'var(--jump)', duck: 'var(--duck)' };
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+let game = createGame();
+let mode = 'ai';
+let best = 0;
+let ready = false;
+let lastChoice = 'run';
+const agent = new Agent({ endpoint: '/v1/systemone' });
+let latSum = 0;
+
+// ---------- controls ----------
+function setMode(m) {
+  mode = m;
+  $('modeAi').classList.toggle('on', m === 'ai');
+  $('modeHuman').classList.toggle('on', m === 'human');
+  game.input.duck = false;
+  restart();
+}
+$('modeAi').onclick = () => setMode('ai');
+$('modeHuman').onclick = () => setMode('human');
+$('style').onchange = e => { agent.style = e.target.value; restart(); };
+$('restart').onclick = () => restart();
+
+function restart() {
+  best = Math.max(best, Math.floor(game.score));
+  game = createGame();
+  lastChoice = 'run';
+}
+
+addEventListener('keydown', e => {
+  if (e.key === 'r' || e.key === 'R') { restart(); return; }
+  if (mode !== 'human') return;
+  if (e.code === 'Space' || e.code === 'ArrowUp') {
+    e.preventDefault();
+    if (game.over) restart(); else game.input.jump = true;
+  }
+  if (e.code === 'ArrowDown') { e.preventDefault(); game.input.duck = true; }
+});
+addEventListener('keyup', e => { if (mode === 'human' && e.code === 'ArrowDown') game.input.duck = false; });
+
+// ---------- agent loop: runs concurrently with the 60 fps game loop ----------
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function agentLoop() {
+  try {
+    await agent.warmup();
+    ready = true;
+    $('status').textContent = 'model ready';
+  } catch (err) {
+    $('status').textContent = `can't reach model: ${err.message}`;
+    $('status').className = 'err';
+    return;
+  }
+  for (;;) {
+    if (mode !== 'ai' || game.over) { await sleep(30); continue; }
+    const obs = observe(game);
+    if (obs.airborne) { await sleep(5); continue; }  // nothing to decide mid-jump
+    const gen = game.id;
+    let d;
+    try {
+      d = await agent.decide(obs);
+    } catch (err) {
+      $('status').textContent = `model error: ${err.message}`;
+      $('status').className = 'err';
+      await sleep(1000);
+      continue;
+    }
+    if (game.id !== gen || game.over || mode !== 'ai') continue;  // stale answer
+    apply(game, d.choice);
+    lastChoice = d.choice;
+    show(d);
+  }
+}
+
+function show(d) {
+  latSum += d.ms;
+  $('lat').textContent = d.ms.toFixed(0);
+  $('avg').textContent = (latSum / agent.calls).toFixed(0);
+  $('calls').textContent = agent.calls;
+  $('state').textContent = d.state;
+  $('probs').innerHTML = ['run', 'jump', 'duck'].map(k => {
+    const p = d.probabilities[k] ?? 0;
+    return `<div class="prob ${k === d.choice ? 'win' : ''}"><b>${k}</b>
+      <div class="track"><div class="fill" style="width:${(p * 100).toFixed(1)}%;background:${COLORS[k]}"></div></div>
+      <span>${(p * 100).toFixed(0)}%</span></div>`;
+  }).join('');
+  const li = document.createElement('li');
+  li.innerHTML = `<span class="c" style="color:${COLORS[d.choice]}">${d.choice}</span><span>${d.ms.toFixed(0)}ms</span><span class="s"></span>`;
+  li.querySelector('.s').textContent = d.state;
+  const log = $('log');
+  log.prepend(li);
+  while (log.children.length > 40) log.lastChild.remove();
+}
+
+// ---------- rendering ----------
+function rect(x, y, w, h) { ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h)); }
+
+function drawDino(g) {
+  const d = g.dino, b = dinoBox(d);
+  const top = GROUND - b.y - b.h;
+  const leg = Math.floor(g.t * 12) % 2;
+  ctx.fillStyle = css('--fg');
+  if (d.ducking) {
+    rect(b.x, top + 6, 38, 14);            // body
+    rect(b.x + 34, top, 22, 14);           // head
+    ctx.fillStyle = css('--panel'); rect(b.x + 38, top + 3, 3, 3);
+    ctx.fillStyle = css('--fg');
+    rect(b.x + 8 + (leg ? 0 : 10), top + 20, 5, 6);
+  } else {
+    rect(b.x + 18, top, 22, 15);           // head
+    rect(b.x + 8, top + 13, 22, 20);       // body
+    rect(b.x, top + 15, 10, 6);            // tail
+    rect(b.x + 28, top + 20, 7, 3);        // arm
+    ctx.fillStyle = css('--panel'); rect(b.x + 23, top + 3, 3, 3);
+    ctx.fillStyle = css('--fg');
+    const air = d.y > 0;
+    rect(b.x + 11, top + 33, 5, air || leg ? 11 : 7);
+    rect(b.x + 22, top + 33, 5, air || !leg ? 11 : 7);
+  }
+  if (mode === 'ai' && lastChoice !== 'run') {
+    ctx.fillStyle = css(lastChoice === 'jump' ? '--jump' : '--duck');
+    ctx.font = '12px ui-monospace, monospace';
+    ctx.fillText(lastChoice, b.x, top - 6);
+  }
+}
+
+function drawObstacle(o, t) {
+  const top = GROUND - o.y - o.h;
+  ctx.fillStyle = css('--fg');
+  if (o.kind.startsWith('cactus')) {
+    const seg = o.w / o.n;
+    for (let i = 0; i < o.n; i++) {
+      const x = o.x + i * seg;
+      rect(x + seg * 0.32, top, seg * 0.36, o.h);
+      rect(x, top + o.h * 0.3, seg * 0.2, o.h * 0.3);
+      rect(x + seg * 0.8, top + o.h * 0.2, seg * 0.2, o.h * 0.3);
+      rect(x, top + o.h * 0.55, seg * 0.4, 3);
+      rect(x + seg * 0.6, top + o.h * 0.45, seg * 0.4, 3);
+    }
+  } else {
+    const up = Math.floor(t * 6) % 2;
+    rect(o.x + 4, top + 12, 34, 9);       // body
+    rect(o.x, top + 10, 10, 6);           // beak/head
+    ctx.beginPath();                      // wing
+    ctx.moveTo(o.x + 14, top + 13);
+    ctx.lineTo(o.x + 30, top + 13);
+    ctx.lineTo(o.x + 20, up ? top : top + 30);
+    ctx.fill();
+  }
+}
+
+function draw() {
+  const g = game;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = css('--fg');
+  rect(0, GROUND, WORLD_W, 1);
+  const off = (g.t * g.speed) % 40;
+  for (let x = -off; x < WORLD_W; x += 40) rect(x, GROUND + 6 + ((x + off) % 80 ? 0 : 4), 6, 1);
+  for (const o of g.obstacles) drawObstacle(o, g.t);
+  drawDino(g);
+
+  ctx.fillStyle = css('--fg');
+  ctx.font = '14px ui-monospace, monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText(`${String(Math.floor(g.score)).padStart(5, '0')}`, WORLD_W - 12, 22);
+  ctx.textAlign = 'left';
+  ctx.fillText(mode === 'ai' ? (ready ? 'AI: tev1:0.8b' : 'AI: warming up…') : 'HUMAN', 12, 22);
+  if (g.over) {
+    ctx.textAlign = 'center';
+    ctx.fillText(`GAME OVER — hit ${g.cause}`, WORLD_W / 2, 90);
+    ctx.fillStyle = css('--muted');
+    ctx.fillText(mode === 'ai' ? ($('auto').checked ? 'restarting…' : 'press R') : 'Space to restart', WORLD_W / 2, 112);
+    ctx.textAlign = 'left';
+  }
+}
+
+// ---------- main loop ----------
+let last = performance.now();
+let restartAt = 0;
+function frame(now) {
+  const dt = Math.min((now - last) / 1000, 0.05);
+  last = now;
+  const running = mode === 'human' || ready;  // AI games start once the model is warm
+  if (running) step(game, dt);
+  if (game.over) {
+    best = Math.max(best, Math.floor(game.score));
+    if (mode === 'ai' && $('auto').checked) {
+      if (!restartAt) restartAt = now + 1500;
+      else if (now >= restartAt) { restartAt = 0; restart(); }
+    }
+  } else restartAt = 0;
+  $('score').textContent = Math.floor(game.score);
+  $('best').textContent = Math.max(best, Math.floor(game.score));
+  $('cleared').textContent = game.cleared;
+  draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+agentLoop();
+</script>
+</body>
+</html>

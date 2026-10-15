@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rule Arcade</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='5' cy='5' r='3.5' fill='%2330a46c'/><rect x='9' y='9' width='6' height='6' fill='%23e5484d'/><circle cx='12' cy='4' r='2.5' fill='%233e8ef7'/></svg>">
+<style>
+  :root {
+    --bg: #f6f6f4; --fg: #2b2b2b; --muted: #7c7c78; --panel: #ffffff; --line: #e3e3df; --field: #fbfbf9;
+    --collect: #30a46c; --avoid: #e5484d; --ignore: #9b9b96; --accent: #3e8ef7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #18181a; --fg: #e4e4e2; --muted: #8e8e93; --panel: #222225; --line: #34343a; --field: #1d1d20;
+            --collect: #3dd68c; --avoid: #ff6369; --ignore: #8e8e93; --accent: #5b9cf0; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1180px; margin: 0 auto; padding: 18px 16px 40px; }
+  h1 { font-size: 19px; margin: 0; }
+  .sub { color: var(--muted); margin: 2px 0 12px; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 14px; align-items: start; }
+  @media (max-width: 960px) { .layout { grid-template-columns: 1fr; } }
+  .rule { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; margin-bottom: 10px; }
+  .rule .wave { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  .rule .text { font-size: 18px; font-weight: 600; margin: 2px 0 8px; }
+  .timer { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+  .timer div { height: 100%; background: var(--accent); width: 0; }
+  canvas { width: 100%; height: auto; display: block; background: var(--field);
+           border: 1px solid var(--line); border-radius: 10px; touch-action: none; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin: 10px 0; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  button { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line);
+           border-radius: 8px; padding: 5px 11px; cursor: pointer; }
+  button.on { background: var(--accent); color: #fff; }
+  label { display: inline-flex; gap: 6px; align-items: center; }
+  #status { color: var(--muted); }
+  #status.err { color: var(--avoid); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--muted); font-size: 12.5px; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 2px solid; margin-right: 5px; vertical-align: -1px; }
+  .side > section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+  .side h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 8px; }
+  .stats b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
+  .stats span { color: var(--muted); font-size: 11.5px; }
+  ul.log { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow: auto; font-size: 12.5px; }
+  ul.log li { display: grid; grid-template-columns: 58px 34px 1fr auto; gap: 6px; padding: 3px 0; border-bottom: 1px solid var(--line); align-items: baseline; }
+  ul.log .lab { font-weight: 600; }
+  ul.log .obj { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ok { color: var(--collect); } .bad { color: var(--avoid); }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  td, th { padding: 4px 4px; border-bottom: 1px solid var(--line); text-align: right; font-variant-numeric: tabular-nums; }
+  td:first-child, th:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 500; }
+  td.rt { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hint { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Rule Arcade</h1>
+  <p class="sub">The rule changes every wave. A local <code>tev1:0.8b</code> System One model reads the rule and labels each object
+    <b>collect</b> / <b>avoid</b> / <b>ignore</b>; plain steering code turns those labels into movement.</p>
+
+  <div class="layout">
+    <div>
+      <div class="rule">
+        <div class="wave" id="waveNo">Wave 1</div>
+        <div class="text" id="ruleText">–</div>
+        <div class="timer"><div id="timer"></div></div>
+      </div>
+      <canvas id="c" width="800" height="500"></canvas>
+      <div class="bar">
+        <div class="seg">
+          <button id="m-model" class="on">Model plays</button>
+          <button id="m-oracle">Oracle plays</button>
+          <button id="m-human">You play</button>
+        </div>
+        <label><input type="checkbox" id="truth"> mark wrong labels</label>
+        <button id="restart">Restart</button>
+        <span id="status">warming up model…</span>
+      </div>
+      <div class="legend">
+        <span><i class="dot" style="border-color:var(--collect)"></i>collect</span>
+        <span><i class="dot" style="border-color:var(--avoid)"></i>avoid</span>
+        <span><i class="dot" style="border-color:var(--ignore)"></i>ignore</span>
+        <span><i class="dot" style="border-color:var(--muted);border-style:dashed"></i>not classified yet (steered around)</span>
+        <span>ring opacity = model confidence</span>
+      </div>
+      <p class="hint">Scoring: collect-object +10, avoid-object −20, ignore-object 0. The bot only chases an object when
+        10·P(collect) − 20·P(avoid) &gt; 2, so it relies on the model's probabilities, not just its top answer.
+        “Oracle” uses the true labels: the best the steering can do. “You play”: arrow keys / WASD, with the model's labels as hints.</p>
+    </div>
+
+    <div class="side">
+      <section>
+        <h2>This game</h2>
+        <div class="stats">
+          <div><b id="score">0</b><span>score</span></div>
+          <div><b id="good">0</b><span>collected</span></div>
+          <div><b id="bad">0</b><span>bad hits</span></div>
+          <div><b id="acc">–</b><span>label accuracy</span></div>
+          <div><b id="lat">–</b><span>avg latency ms</span></div>
+          <div><b id="queue">0</b><span>unlabelled</span></div>
+        </div>
+      </section>
+      <section>
+        <h2>Model decisions</h2>
+        <ul class="log" id="log"></ul>
+      </section>
+      <section>
+        <h2>Waves</h2>
+        <table>
+          <thead><tr><th>Rule</th><th>pts</th><th>+</th><th>−</th><th>acc</th></tr></thead>
+          <tbody id="waves"></tbody>
+        </table>
+      </section>
+    </div>
+  </div>
+</main>
+
+<script type="module">
+import { createGame, step, steer, setLabel, labelOf, nextToClassify, waveSummary, W, H, WAVE_S } from './game.js';
+import { COLORS, NOUNS, labelsFor, describeObject } from './world.js';
+import { Agent } from './agent.js';
+
+const $ = id => document.getElementById(id);
+const canvas = $('c'), ctx = canvas.getContext('2d');
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+let g = createGame();
+let mode = 'model';
+let ready = false;
+let latSum = 0, latN = 0;
+let shownWave = 0, bannerUntil = 0;
+const agent = new Agent({ endpoint: '/v1/systemone' });
+const keys = new Set();
+
+// ---------- controls ----------
+for (const m of ['model', 'oracle', 'human']) {
+  $(`m-${m}`).onclick = () => {
+    mode = m;
+    for (const n of ['model', 'oracle', 'human']) $(`m-${n}`).classList.toggle('on', n === m);
+    restart();
+  };
+}
+$('restart').onclick = () => restart();
+function restart() {
+  g = createGame();
+  latSum = 0; latN = 0; shownWave = 0;
+  $('log').innerHTML = '';
+}
+addEventListener('keydown', e => {
+  if (mode !== 'human') return;
+  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
+  keys.add(e.key.toLowerCase());
+});
+addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
+function keyMove() {
+  const k = s => keys.has(s);
+  return {
+    fx: (k('arrowright') || k('d') ? 1 : 0) - (k('arrowleft') || k('a') ? 1 : 0),
+    fy: (k('arrowdown') || k('s') ? 1 : 0) - (k('arrowup') || k('w') ? 1 : 0),
+  };
+}
+
+// ---------- classifier loop (model) ----------
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function modelLoop() {
+  try {
+    await agent.warmup(g.rule);
+    ready = true;
+    $('status').textContent = 'model ready';
+  } catch (err) {
+    $('status').textContent = `can't reach model: ${err.message}`;
+    $('status').className = 'err';
+    return;
+  }
+  for (;;) {
+    if (mode === 'oracle') { await sleep(50); continue; }
+    const game = g, o = nextToClassify(game);
+    if (!o) { await sleep(10); continue; }
+    const wave = game.wave, rule = game.rule;
+    let r;
+    try {
+      r = await agent.classify(rule, o);
+    } catch (err) {
+      $('status').textContent = `model error: ${err.message}`;
+      $('status').className = 'err';
+      await sleep(1000);
+      continue;
+    }
+    latSum += r.ms; latN++;
+    // Answers for an old rule, a restarted game, or a vanished object are dropped.
+    if (game !== g || game.wave !== wave || !game.objects.includes(o)) continue;
+    setLabel(game, o, r.label, r.probabilities);
+    logDecision(o, r, rule.truth(o));
+  }
+}
+
+function oracleLabels() {
+  for (let o; (o = nextToClassify(g));) {
+    const truth = g.rule.truth(o);
+    setLabel(g, o, truth, Object.fromEntries(labelsFor(g.rule).map(l => [l, l === truth ? 1 : 0])));
+  }
+}
+
+function logDecision(o, r, truth) {
+  const li = document.createElement('li');
+  const ok = r.label === truth;
+  const p = r.probabilities[r.label] ?? 0;
+  li.innerHTML = `<span class="lab" style="color:var(--${r.label})">${r.label}</span>
+    <span class="mono">${Math.round(p * 100)}%</span><span class="obj"></span>
+    <span class="${ok ? 'ok' : 'bad'}">${ok ? '✓' : '✗ ' + truth}</span>`;
+  li.querySelector('.obj').textContent = describeObject(o);
+  li.title = `${r.state}\n${Math.round(r.ms)} ms`;
+  const log = $('log');
+  log.prepend(li);
+  while (log.children.length > 60) log.lastChild.remove();
+}
+
+// ---------- rendering ----------
+function shapePath(shape, x, y, r) {
+  ctx.beginPath();
+  if (shape === 'circle') ctx.arc(x, y, r, 0, Math.PI * 2);
+  else if (shape === 'square') ctx.rect(x - r * 0.85, y - r * 0.85, r * 1.7, r * 1.7);
+  else if (shape === 'triangle') { ctx.moveTo(x, y - r); ctx.lineTo(x + r * 0.95, y + r * 0.75); ctx.lineTo(x - r * 0.95, y + r * 0.75); ctx.closePath(); }
+  else if (shape === 'diamond') { ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath(); }
+  else { // star
+    for (let i = 0; i < 10; i++) {
+      const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? r * 0.45 : r;
+      i ? ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr) : ctx.moveTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+    }
+    ctx.closePath();
+  }
+}
+
+function draw(now) {
+  ctx.clearRect(0, 0, W, H);
+  const showTruth = $('truth').checked;
+  ctx.textAlign = 'center';
+  for (const o of g.objects) {
+    const l = labelOf(g, o);
+    // Label ring
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(o.x, o.y, o.r + 7, 0, Math.PI * 2);
+    if (l) {
+      ctx.setLineDash([]);
+      ctx.strokeStyle = css(`--${l.label}`);
+      ctx.globalAlpha = 0.25 + 0.75 * (l.probabilities[l.label] ?? 1);
+    } else {
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = css('--muted');
+      ctx.globalAlpha = 0.7;
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+    // Body
+    shapePath(NOUNS[o.noun].shape, o.x, o.y, o.r);
+    ctx.fillStyle = COLORS[o.color];
+    ctx.fill();
+    if (o.fast) { ctx.strokeStyle = css('--fg'); ctx.lineWidth = 1.5; ctx.stroke(); }
+    // Name
+    ctx.fillStyle = css('--fg');
+    ctx.font = '11px ui-sans-serif, system-ui, sans-serif';
+    ctx.fillText(o.noun + (o.fast ? ' »' : ''), o.x, o.y + o.r + 20);
+    if (showTruth && l && l.label !== g.rule.truth(o)) {
+      ctx.fillStyle = css('--avoid');
+      ctx.font = 'bold 14px ui-sans-serif, system-ui, sans-serif';
+      ctx.fillText('✗', o.x + o.r + 10, o.y - o.r - 4);
+    }
+  }
+  // Player
+  const p = g.player;
+  ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+  ctx.fillStyle = css('--fg'); ctx.fill();
+  ctx.beginPath(); ctx.arc(p.x, p.y, p.r - 5, 0, Math.PI * 2);
+  ctx.fillStyle = css('--field'); ctx.fill();
+
+  // Touch popups
+  ctx.font = 'bold 13px ui-sans-serif, system-ui, sans-serif';
+  for (const e of g.events) {
+    const age = g.t - e.t;
+    if (age > 0.8) continue;
+    ctx.globalAlpha = 1 - age / 0.8;
+    ctx.fillStyle = css(e.pts > 0 ? '--collect' : e.pts < 0 ? '--avoid' : '--muted');
+    ctx.fillText(e.pts > 0 ? `+${e.pts}` : `${e.pts}`, e.o.x, e.o.y - 20 - age * 30);
+  }
+  ctx.globalAlpha = 1;
+  g.events = g.events.filter(e => g.t - e.t < 1);
+
+  // New-rule banner
+  if (now < bannerUntil) {
+    ctx.globalAlpha = Math.min(1, (bannerUntil - now) / 500);
+    ctx.fillStyle = css('--panel');
+    ctx.fillRect(0, H / 2 - 34, W, 68);
+    ctx.fillStyle = css('--fg');
+    ctx.font = '600 13px ui-sans-serif, system-ui, sans-serif';
+    ctx.fillText(`NEW RULE · WAVE ${g.wave}`, W / 2, H / 2 - 10);
+    ctx.font = '600 17px ui-sans-serif, system-ui, sans-serif';
+    ctx.fillText(g.rule.text, W / 2, H / 2 + 16);
+    ctx.globalAlpha = 1;
+  }
+  if (mode !== 'oracle' && !ready) {
+    ctx.fillStyle = css('--muted');
+    ctx.font = '15px ui-sans-serif, system-ui, sans-serif';
+    ctx.fillText('warming up model…', W / 2, 30);
+  }
+}
+
+function hud() {
+  if (g.wave !== shownWave) {
+    shownWave = g.wave;
+    bannerUntil = performance.now() + 2200;
+    $('waveNo').textContent = `Wave ${g.wave}`;
+    $('ruleText').textContent = g.rule.text;
+    $('waves').innerHTML = waveSummary(g).slice().reverse().map(w =>
+      `<tr><td class="rt" title="${w.rule}">${w.partial ? '▶ ' : ''}${w.rule}</td><td>${w.partial ? '…' : w.score}</td>
+       <td>${w.partial ? '' : w.good}</td><td>${w.partial ? '' : w.bad}</td>
+       <td>${w.partial || !w.labelled ? '' : Math.round(100 * w.labelledRight / w.labelled) + '%'}</td></tr>`).join('');
+  }
+  $('timer').style.width = `${(100 * g.waveT / WAVE_S).toFixed(1)}%`;
+  const all = waveSummary(g);
+  const sum = k => all.reduce((s, w) => s + w[k], 0);
+  $('score').textContent = g.score;
+  $('good').textContent = sum('good');
+  $('bad').textContent = sum('bad');
+  $('acc').textContent = sum('labelled') ? `${Math.round(100 * sum('labelledRight') / sum('labelled'))}%` : '–';
+  $('lat').textContent = latN ? Math.round(latSum / latN) : '–';
+  $('queue').textContent = g.objects.filter(o => !labelOf(g, o)).length;
+}
+
+// ---------- main loop ----------
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min((now - last) / 1000, 0.05);
+  last = now;
+  if (mode === 'oracle') oracleLabels();
+  const running = mode === 'oracle' || ready;  // model games start once the model is warm
+  if (running) step(g, dt, mode === 'human' ? keyMove() : steer(g));
+  hud();
+  draw(now);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+modelLoop();
+</script>
+</body>
+</html>
