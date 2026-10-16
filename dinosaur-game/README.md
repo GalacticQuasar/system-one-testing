@@ -19,4 +19,4 @@ Stop with **Ctrl+C**, or `pkill -f "python3 server.py"` if it's in the backgroun
 Headless benchmark: `node bench.mjs [games=3] [semantic|raw]`.
 
 If games get slow, Ollama's runner has probably filled RAM with its prompt cache; see the
-"Ollama memory growth" section in `../rule-arcade/README.md`.
+"Ollama memory growth" section in `../README.md`.

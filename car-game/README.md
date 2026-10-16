@@ -17,7 +17,7 @@ A local System One model (`tev1:0.8b` via Ollama's `/v1/systemone`) drives a 2D 
 ## Run
 
 Uses the cache-disabled Ollama on port 11435 by default (see "Ollama memory growth" in
-`../rule-arcade/README.md`). Start it first:
+`../README.md`). Start it first:
 
 ```bash
 OLLAMA_HOST=127.0.0.1:11435 OLLAMA_MODELS=/usr/share/ollama/.ollama/models \
