@@ -58,6 +58,27 @@
   th { color: var(--muted); font-weight: 500; }
   td.rt { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .hint { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
+  .decision { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin: 10px 0; }
+  .decision .head { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; margin-bottom: 8px; }
+  .decision h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0; font-weight: 600; }
+  .decision .meta { color: var(--muted); font-size: 12.5px; }
+  .decision .cols { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 14px; }
+  @media (max-width: 700px) { .decision .cols { grid-template-columns: 1fr; } }
+  .decision pre { margin: 0; white-space: pre-wrap; word-break: break-word; background: var(--field);
+                  border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+  .decision .lbl { font-size: 11.5px; color: var(--muted); margin: 8px 0 4px; }
+  .decision .lbl:first-child { margin-top: 0; }
+  .decision .opts { margin: 0; padding-left: 16px; font-size: 12.5px; }
+  .prob { display: grid; grid-template-columns: 58px 1fr 42px; gap: 8px; align-items: center; margin: 7px 0; }
+  .prob .track { height: 14px; background: var(--line); border-radius: 7px; overflow: hidden; }
+  .prob .fill { height: 100%; width: 0; transition: width .15s ease-out; }
+  .prob.win b { text-decoration: underline; text-underline-offset: 3px; }
+  .prob span { text-align: right; font-variant-numeric: tabular-nums; }
+  .verdict { margin-top: 8px; font-size: 13px; }
+  .thinking { color: var(--accent); }
+  ul.log li { cursor: pointer; }
+  ul.log li.sel { background: var(--field); }
+  #follow { font-size: 12px; padding: 2px 8px; }
 </style>
 </head>
 <body>
@@ -84,12 +105,34 @@
         <button id="restart">Restart</button>
         <span id="status">warming up model…</span>
       </div>
+      <section class="decision">
+        <div class="head">
+          <h2 id="decTitle">Current decision</h2>
+          <span class="meta"><span id="decMeta">waiting for the first call…</span>
+            <button id="follow" hidden>follow live</button></span>
+        </div>
+        <div class="cols">
+          <div>
+            <div class="lbl">Input sent to the model (<code>state</code>)</div>
+            <pre id="decState">–</pre>
+            <div class="lbl">Question (<code>choice</code>)</div>
+            <div id="decQuestion" class="mono">–</div>
+            <ul class="opts" id="decOpts"></ul>
+          </div>
+          <div>
+            <div class="lbl">Model output (probabilities)</div>
+            <div id="decProbs"></div>
+            <div class="verdict" id="decVerdict"></div>
+          </div>
+        </div>
+      </section>
       <div class="legend">
         <span><i class="dot" style="border-color:var(--collect)"></i>collect</span>
         <span><i class="dot" style="border-color:var(--avoid)"></i>avoid</span>
         <span><i class="dot" style="border-color:var(--ignore)"></i>ignore</span>
         <span><i class="dot" style="border-color:var(--muted);border-style:dashed"></i>not classified yet (steered around)</span>
         <span>ring opacity = model confidence</span>
+        <span><i class="dot" style="border-color:var(--accent)"></i>being classified now</span>
       </div>
       <p class="hint">Scoring: collect-object +10, avoid-object −20, ignore-object 0. The bot only chases an object when
         10·P(collect) − 20·P(avoid) &gt; 2, so it relies on the model's probabilities, not just its top answer.
@@ -126,7 +169,7 @@
 <script type="module">
 import { createGame, step, steer, setLabel, labelOf, nextToClassify, waveSummary, W, H, WAVE_S } from './game.js';
 import { COLORS, NOUNS, labelsFor, describeObject } from './world.js';
-import { Agent } from './agent.js';
+import { Agent, questionsFor, stateText } from './agent.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('c'), ctx = canvas.getContext('2d');
@@ -139,6 +182,8 @@ let latSum = 0, latN = 0;
 let shownWave = 0, bannerUntil = 0;
 const agent = new Agent({ endpoint: '/v1/systemone' });
 const keys = new Set();
+let inFlight = null;   // object currently being classified
+let pinned = null;     // decision pinned from the log (null = follow live)
 
 // ---------- controls ----------
 for (const m of ['model', 'oracle', 'human']) {
@@ -153,6 +198,9 @@ function restart() {
   g = createGame();
   latSum = 0; latN = 0; shownWave = 0;
   $('log').innerHTML = '';
+  inFlight = null;
+  shownAnswer = false;
+  unpin();
 }
 addEventListener('keydown', e => {
   if (mode !== 'human') return;
@@ -185,20 +233,28 @@ async function modelLoop() {
     const game = g, o = nextToClassify(game);
     if (!o) { await sleep(10); continue; }
     const wave = game.wave, rule = game.rule;
+    inFlight = o;
+    showDecision({ o, rule, state: stateText(rule.text, o), wave });
     let r;
     try {
       r = await agent.classify(rule, o);
     } catch (err) {
+      inFlight = null;
       $('status').textContent = `model error: ${err.message}`;
       $('status').className = 'err';
       await sleep(1000);
       continue;
     }
+    inFlight = null;
     latSum += r.ms; latN++;
     // Answers for an old rule, a restarted game, or a vanished object are dropped.
-    if (game !== g || game.wave !== wave || !game.objects.includes(o)) continue;
+    const d = { o, rule, wave, state: r.state, label: r.label, probabilities: r.probabilities, ms: r.ms, truth: rule.truth(o) };
+    const stale = game !== g || game.wave !== wave ? 'rule changed before the answer arrived'
+      : !game.objects.includes(o) ? 'object left the screen before the answer arrived' : null;
+    showDecision({ ...d, dropped: stale });
+    if (stale) continue;
     setLabel(game, o, r.label, r.probabilities);
-    logDecision(o, r, rule.truth(o));
+    logDecision(d);
   }
 }
 
@@ -209,7 +265,8 @@ function oracleLabels() {
   }
 }
 
-function logDecision(o, r, truth) {
+function logDecision(d) {
+  const { o, truth } = d, r = d;
   const li = document.createElement('li');
   const ok = r.label === truth;
   const p = r.probabilities[r.label] ?? 0;
@@ -217,10 +274,65 @@ function logDecision(o, r, truth) {
     <span class="mono">${Math.round(p * 100)}%</span><span class="obj"></span>
     <span class="${ok ? 'ok' : 'bad'}">${ok ? '✓' : '✗ ' + truth}</span>`;
   li.querySelector('.obj').textContent = describeObject(o);
-  li.title = `${r.state}\n${Math.round(r.ms)} ms`;
+  li.title = 'click to inspect this decision';
+  li.onclick = () => {
+    for (const x of $('log').children) x.classList.remove('sel');
+    li.classList.add('sel');
+    pinned = d;
+    $('follow').hidden = false;
+    showDecision(d, true);
+  };
   const log = $('log');
   log.prepend(li);
   while (log.children.length > 60) log.lastChild.remove();
+}
+
+// ---------- decision panel ----------
+function unpin() {
+  pinned = null;
+  $('follow').hidden = true;
+  for (const x of $('log').children) x.classList.remove('sel');
+}
+$('follow').onclick = () => unpin();
+
+const pct = p => `${Math.round((p ?? 0) * 100)}%`;
+
+// d: { o, rule, wave, state } while in flight; plus { label, probabilities, ms, truth, dropped? } once answered.
+let shownAnswer = false;  // has the panel shown a completed answer yet?
+function showDecision(d, fromLog = false) {
+  if (pinned && !fromLog) return;
+  const done = !!d.probabilities;
+  // Calls go out ~7×/s; redrawing the whole panel for each in-flight request
+  // would just flash empty bars. Keep the last answer up and only say what's
+  // being asked now.
+  if (!done && shownAnswer) {
+    $('decMeta').innerHTML = `<span class="thinking">now asking about: ${describeObject(d.o)}…</span>`;
+    return;
+  }
+  if (done) shownAnswer = true;
+  const q = questionsFor(d.rule).action;
+  const options = Object.keys(q.criteria);
+  $('decTitle').textContent = fromLog ? 'Pinned decision' : 'Current decision';
+  $('decState').textContent = d.state;
+  $('decQuestion').textContent = q.instructions;
+  $('decOpts').innerHTML = options.map(k =>
+    `<li><b style="color:var(--${k})">${k}</b>: ${q.criteria[k].replace(/^[^:]*:\s*/, '')}</li>`).join('');
+  $('decMeta').innerHTML = done
+    ? `wave ${d.wave} · ${Math.round(d.ms)} ms`
+    : `<span class="thinking">wave ${d.wave} · asking the model…</span>`;
+  $('decProbs').innerHTML = options.map(k => {
+    const p = done ? d.probabilities[k] ?? 0 : 0;
+    return `<div class="prob ${done && k === d.label ? 'win' : ''}"><b style="color:var(--${k})">${k}</b>
+      <div class="track"><div class="fill" style="width:${(p * 100).toFixed(1)}%;background:var(--${k})"></div></div>
+      <span>${done ? pct(p) : '…'}</span></div>`;
+  }).join('');
+  if (!done) { $('decVerdict').innerHTML = ''; return; }
+  const ok = d.label === d.truth;
+  const conf = d.probabilities[d.label] ?? 0;
+  $('decVerdict').innerHTML =
+    `Chose <b style="color:var(--${d.label})">${d.label}</b> at ${pct(conf)} · ` +
+    (ok ? '<span class="ok">✓ correct</span>' : `<span class="bad">✗ correct answer: ${d.truth}</span>`) +
+    (d.dropped ? `<br><span class="meta">Not used: ${d.dropped}.</span>` : '');
 }
 
 // ---------- rendering ----------
@@ -275,6 +387,17 @@ function draw(now) {
       ctx.fillText('✗', o.x + o.r + 10, o.y - o.r - 4);
     }
   }
+  // Object being classified right now (and the pinned one, if any)
+  const pulse = 0.5 + 0.5 * Math.sin(now / 120);
+  for (const [o, alpha] of [[inFlight, 0.35 + 0.65 * pulse], [pinned && pinned.o, 1]]) {
+    if (!o || !g.objects.includes(o)) continue;
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = css('--accent');
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(o.x, o.y, o.r + 13, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
   // Player
   const p = g.player;
   ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
