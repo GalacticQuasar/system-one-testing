@@ -17,8 +17,7 @@ python3 demo.py
 cd <game> && python3 server.py      # stop with Ctrl+C
 ```
 
-Each game folder has its own README with details and results. `car-game` expects the cache-disabled
-Ollama on port 11435 by default (see below).
+Each game folder has its own README with details and results.
 
 ## ⚠️ Ollama memory growth note
 

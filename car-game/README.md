@@ -16,21 +16,13 @@ A local System One model (`tev1:0.8b` via Ollama's `/v1/systemone`) drives a 2D 
 
 ## Run
 
-Uses the cache-disabled Ollama on port 11435 by default (see "Ollama memory growth" in
-`../README.md`). Start it first:
-
-```bash
-OLLAMA_HOST=127.0.0.1:11435 OLLAMA_MODELS=/usr/share/ollama/.ollama/models \
-  LLAMA_ARG_CACHE_RAM=0 ollama serve
-```
-
-Then:
-
 ```bash
 cd car-game
 python3 server.py                 # → http://localhost:8002
-OLLAMA_HOST=http://localhost:11434 python3 server.py   # or use the system Ollama
 ```
+
+Use a different Ollama (e.g. the cache-disabled one in "Ollama memory growth" in `../README.md`):
+`OLLAMA_HOST=http://localhost:11435 python3 server.py`.
 
 On the page: **Model**, **Oracle** (ground-truth answers in city, pure-pursuit code on the track),
 **Random** (city), **You** (track, ← →).
@@ -64,7 +56,6 @@ What changed the numbers while building this (all measured with the probes):
 ## Measure
 
 ```bash
-export OLLAMA_HOST=http://localhost:11435
 node probe.mjs 30                            # per-question accuracy, no game
 node bench.mjs city model 120                # real time
 node bench.mjs city oracle 300               # ceiling (instant)
@@ -80,5 +71,5 @@ node bench.mjs track oracle semantic 120
 | `track.js` | loop track, car physics, sensors, pure-pursuit oracle |
 | `agent.js` | the model calls: facts → `state` + questions, answers → decision, for both modes |
 | `index.html` | the page |
-| `server.py` | static server + proxy to Ollama (port 8002, Ollama 11435) |
+| `server.py` | static server + proxy to Ollama (port 8002) |
 | `bench.mjs`, `probe.mjs` | headless measurements |

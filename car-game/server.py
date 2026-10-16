@@ -3,7 +3,7 @@
 
 Usage:
     python3 server.py            # then open http://localhost:8002
-    OLLAMA_HOST=http://localhost:11434 python3 server.py   # use the system Ollama instead
+    OLLAMA_HOST=http://localhost:11435 python3 server.py   # use another Ollama
 """
 import http.server
 import os
@@ -12,8 +12,7 @@ import urllib.request
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.environ.get("PORT", "8002"))
-# Default: the cache-disabled user-level Ollama (see README), not the system one on 11434.
-HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11435").rstrip("/")
+HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
 if not HOST.startswith("http"):
     HOST = "http://" + HOST
 
